@@ -1,0 +1,16 @@
+{
+  "name": "opa-linter-validator",
+  "version": "1.0.0",
+  "description": "MCP server for linter-validator",
+  "main": "index.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.4.0",
+    "openai": "^4.20.1"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": ["mcp", "opa", "rego", "linter-validator"],
+  "author": "OPA Agent",
+  "license": "MIT"
+}

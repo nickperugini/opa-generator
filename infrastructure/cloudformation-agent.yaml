@@ -1,0 +1,285 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'OpenAI OPA Policy Generator - MCP Agent Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name
+  
+  OpenAIApiKey:
+    Type: String
+    NoEcho: true
+    Description: OpenAI API Key
+    MinLength: 1
+
+Resources:
+  # Secrets Manager for OpenAI API Key
+  OpenAIApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${Environment}-openai-api-key'
+      Description: 'OpenAI API Key for OPA Policy Generator Agent'
+      SecretString: !Sub |
+        {
+          "api_key": "${OpenAIApiKey}"
+        }
+
+  # IAM Role for Lambda Function with enhanced permissions for agent
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-openai-opa-agent-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref OpenAIApiKeySecret
+        - PolicyName: AgentEnhancedPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  # Lambda Function with increased resources for agent
+  OPAPolicyGeneratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-openai-opa-agent'
+      Runtime: nodejs18.x
+      Handler: index-agent.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 900  # 15 minutes for complex agent workflows
+      MemorySize: 1024  # Increased memory for agent operations
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          OPENAI_SECRET_ARN: !Ref OpenAIApiKeySecret
+          NODE_ENV: production
+          MCP_ENABLED: 'true'
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ 
+                message: 'Agent function created, code will be deployed separately',
+                version: '2.0.0-agent'
+              })
+            };
+          };
+
+  # API Gateway HTTP API with additional routes for agent capabilities
+  OPAGeneratorAPI:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${Environment}-openai-opa-agent-api'
+      Description: 'OpenAI OPA Policy Generator Agent API'
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowCredentials: false
+        AllowHeaders:
+          - Content-Type
+          - X-Amz-Date
+          - Authorization
+          - X-Api-Key
+          - Accept
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowOrigins:
+          - http://localhost:5173
+          - http://localhost:3000
+          - http://opa-policy-generator.s3-website-us-east-1.amazonaws.com
+        MaxAge: 300
+
+  # API Gateway Integration
+  LambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref OPAGeneratorAPI
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OPAPolicyGeneratorFunction.Arn}/invocations'
+      PayloadFormatVersion: '2.0'
+      TimeoutInMillis: 29000  # Maximum API Gateway timeout
+
+  # API Gateway Routes - Original endpoints
+  GeneratePolicyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OPAGeneratorAPI
+      RouteKey: 'POST /generate-policy'
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  RefinePolicyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OPAGeneratorAPI
+      RouteKey: 'POST /refine-policy'
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OPAGeneratorAPI
+      RouteKey: 'GET /health'
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  # New Agent-specific routes
+  ValidatePolicyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OPAGeneratorAPI
+      RouteKey: 'POST /validate-policy'
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  ExplainPolicyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref OPAGeneratorAPI
+      RouteKey: 'POST /explain-policy'
+      Target: !Sub 'integrations/${LambdaIntegration}'
+
+  # API Gateway Stage
+  APIStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref OPAGeneratorAPI
+      StageName: !Ref Environment
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 200  # Increased for agent operations
+        ThrottlingRateLimit: 100
+        DetailedMetricsEnabled: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt APIAccessLogGroup.Arn
+        Format: !Sub |
+          {
+            "requestId": "$context.requestId",
+            "requestTime": "$context.requestTime",
+            "httpMethod": "$context.httpMethod",
+            "path": "$context.path",
+            "status": "$context.status",
+            "responseLength": "$context.responseLength",
+            "responseTime": "$context.responseTime",
+            "userAgent": "$context.identity.userAgent",
+            "sourceIp": "$context.identity.sourceIp"
+          }
+
+  # CloudWatch Log Group for API Access Logs
+  APIAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/${Environment}-opa-agent-access-logs'
+      RetentionInDays: 30
+
+  # Lambda Permission for API Gateway
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OPAPolicyGeneratorFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${OPAGeneratorAPI}/*/*'
+
+  # CloudWatch Dashboard for monitoring agent performance
+  AgentDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${Environment}-opa-agent-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${OPAPolicyGeneratorFunction}" ],
+                  [ ".", "Invocations", ".", "." ],
+                  [ ".", "Errors", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Lambda Performance"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApiGateway", "Count", "ApiName", "${Environment}-openai-opa-agent-api" ],
+                  [ ".", "Latency", ".", "." ],
+                  [ ".", "4XXError", ".", "." ],
+                  [ ".", "5XXError", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "API Gateway Metrics"
+              }
+            }
+          ]
+        }
+
+Outputs:
+  APIEndpoint:
+    Description: 'API Gateway endpoint URL for the Agent'
+    Value: !Sub 'https://${OPAGeneratorAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${Environment}-openai-opa-agent-api-endpoint'
+
+  LambdaFunctionName:
+    Description: 'Lambda function name for the Agent'
+    Value: !Ref OPAPolicyGeneratorFunction
+    Export:
+      Name: !Sub '${Environment}-openai-opa-agent-lambda-name'
+
+  SecretArn:
+    Description: 'OpenAI API Key Secret ARN'
+    Value: !Ref OpenAIApiKeySecret
+    Export:
+      Name: !Sub '${Environment}-openai-agent-secret-arn'
+
+  DashboardURL:
+    Description: 'CloudWatch Dashboard URL for monitoring'
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${Environment}-opa-agent-dashboard'
+
+  AvailableEndpoints:
+    Description: 'Available API endpoints'
+    Value: !Sub |
+      Health Check: GET ${OPAGeneratorAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/health
+      Generate Policy: POST ${OPAGeneratorAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/generate-policy
+      Refine Policy: POST ${OPAGeneratorAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/refine-policy
+      Validate Policy: POST ${OPAGeneratorAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/validate-policy
+      Explain Policy: POST ${OPAGeneratorAPI}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/explain-policy

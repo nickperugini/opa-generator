@@ -1,0 +1,82 @@
+{
+  "name": "openai-opa-generator-agent",
+  "version": "2.0.0",
+  "description": "MCP-based Agent for generating OPA Rego policies using OpenAI with tool orchestration",
+  "main": "index-agent.js",
+  "scripts": {
+    "test": "jest",
+    "lint": "eslint .",
+    "start": "node index-agent.js",
+    "dev": "nodemon index-agent.js",
+    "setup-mcp": "npm run setup-mcp-servers",
+    "setup-mcp-servers": "cd mcp-servers && for dir in */; do cd \"$dir\" && npm install && cd ..; done",
+    "deploy": "zip -r function-agent.zip . -x 'node_modules/.cache/*' '*.git*' 'test/*' && aws lambda update-function-code --function-name $LAMBDA_FUNCTION_NAME --zip-file fileb://function-agent.zip"
+  },
+  "dependencies": {
+    "openai": "^4.20.1",
+    "@aws-sdk/client-secrets-manager": "^3.450.0",
+    "@modelcontextprotocol/sdk": "^0.4.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "eslint": "^8.55.0",
+    "nodemon": "^3.0.2"
+  },
+  "keywords": [
+    "openai",
+    "opa",
+    "rego",
+    "policy",
+    "aws",
+    "lambda",
+    "streaming",
+    "mcp",
+    "agent",
+    "tools",
+    "orchestration"
+  ],
+  "author": "OpenAI OPA Agent",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "mcp": {
+    "servers": {
+      "docs-retriever": {
+        "command": "node",
+        "args": ["./mcp-servers/docs-retriever/index.js"],
+        "description": "Gather docs, examples, and best practices"
+      },
+      "code-generator": {
+        "command": "node",
+        "args": ["./mcp-servers/code-generator/index.js"],
+        "description": "Generate new Rego rules from requirements"
+      },
+      "code-refiner": {
+        "command": "node",
+        "args": ["./mcp-servers/code-refiner/index.js"],
+        "description": "Refine, optimize, and explain Rego code"
+      },
+      "linter-validator": {
+        "command": "node",
+        "args": ["./mcp-servers/linter-validator/index.js"],
+        "description": "Check syntax and best practices"
+      },
+      "unit-tester": {
+        "command": "node",
+        "args": ["./mcp-servers/unit-tester/index.js"],
+        "description": "Validate rule correctness with test cases"
+      },
+      "policy-explainer": {
+        "command": "node",
+        "args": ["./mcp-servers/policy-explainer/index.js"],
+        "description": "Translate rules to plain English"
+      },
+      "deployment-helper": {
+        "command": "node",
+        "args": ["./mcp-servers/deployment-helper/index.js"],
+        "description": "Assist with OPA integration and deployment"
+      }
+    }
+  }
+}

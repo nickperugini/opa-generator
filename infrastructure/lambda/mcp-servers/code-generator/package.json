@@ -1,0 +1,16 @@
+{
+  "name": "opa-code-generator",
+  "version": "1.0.0",
+  "description": "MCP server for code-generator",
+  "main": "index.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.4.0",
+    "openai": "^4.20.1"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": ["mcp", "opa", "rego", "code-generator"],
+  "author": "OPA Agent",
+  "license": "MIT"
+}
