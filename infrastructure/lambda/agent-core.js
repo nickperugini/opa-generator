@@ -269,7 +269,59 @@ class OPAPolicyAgent {
                 apiKey: process.env.OPENAI_API_KEY
             });
 
-            const systemPrompt = `You are an expert OPA Rego policy generator. Generate syntactically correct, production-ready Rego policies.
+            // Check if this is a refinement request
+            const isRefinement = context.existing_policy && context.existing_policy.trim().length > 0;
+            
+            let systemPrompt;
+            let userPrompt;
+            
+            if (isRefinement) {
+                // Refinement-specific prompt
+                systemPrompt = `You are an expert OPA Rego policy refiner. Modify existing policies while preserving their core logic and structure.
+
+REQUIREMENTS:
+- Modify the existing policy to incorporate the new requirements
+- Preserve the original policy's intent and structure where possible
+- Follow OPA best practices
+- NO import statements
+- Keep the same package name unless specifically requested to change
+- Include default rules for security
+- Test inputs must be valid JSON objects without comments
+- Test inputs should match the refined policy's expected input structure
+
+RESPONSE FORMAT - Return ONLY a JSON object with this exact structure:
+{
+  "policy": "refined Rego policy code as a string",
+  "test_inputs": [
+    {"user": {"role": "admin", "department": "HR"}},
+    {"user": {"role": "user", "department": "HR"}},
+    {"user": {"role": "admin", "department": "IT"}}
+  ],
+  "explanation": "brief explanation of the changes made"
+}
+
+IMPORTANT: 
+- The policy field must contain ONLY the refined Rego code as a string
+- Test inputs must be valid JSON objects that match your refined policy's input structure
+- If policy uses time/date, include time fields in test inputs
+- If policy uses specific attributes, include those attributes in test inputs
+- Do not include any markdown formatting or code blocks
+- Generate test cases that actually test the refined policy logic (both allow and deny cases)`;
+
+                userPrompt = `Please refine this existing OPA Rego policy:
+
+EXISTING POLICY:
+\`\`\`rego
+${context.existing_policy}
+\`\`\`
+
+REFINEMENT INSTRUCTIONS:
+${instructions}
+
+Please modify the existing policy to incorporate these new requirements while preserving the original logic where appropriate.`;
+            } else {
+                // Original generation prompt
+                systemPrompt = `You are an expert OPA Rego policy generator. Generate syntactically correct, production-ready Rego policies.
 
 REQUIREMENTS:
 - Generate clean, well-commented Rego code
@@ -299,11 +351,14 @@ IMPORTANT:
 - Do not include any markdown formatting or code blocks
 - Generate test cases that actually test the policy logic (both allow and deny cases)`;
 
+                userPrompt = `Generate a Rego policy for: ${instructions}`;
+            }
+
             const completion = await openai.chat.completions.create({
                 model: 'gpt-4o-mini',
                 messages: [
                     { role: 'system', content: systemPrompt },
-                    { role: 'user', content: `Generate a Rego policy for: ${instructions}` }
+                    { role: 'user', content: userPrompt }
                 ],
                 temperature: 0.1,
                 max_tokens: 2000
@@ -354,7 +409,7 @@ IMPORTANT:
                 result = {
                     policy: policy,
                     test_inputs: testInputs,
-                    explanation: parsed.explanation || `Generated policy for: ${instructions}`
+                    explanation: parsed.explanation || (isRefinement ? `Refined policy: ${instructions}` : `Generated policy for: ${instructions}`)
                 };
             } catch (parseError) {
                 // Fallback: extract policy from text response
@@ -370,7 +425,7 @@ IMPORTANT:
                         input: { user: { role: "admin" }, action: "access" },
                         expected_result: true
                     }],
-                    explanation: `Generated policy for: ${instructions}`
+                    explanation: isRefinement ? `Refined policy: ${instructions}` : `Generated policy for: ${instructions}`
                 };
             }
 
@@ -378,11 +433,13 @@ IMPORTANT:
                 type: 'complete',
                 policy: result.policy,
                 test_inputs: result.test_inputs || [],
-                explanation: result.explanation || 'Policy generated successfully',
+                explanation: result.explanation || (isRefinement ? 'Policy refined successfully' : 'Policy generated successfully'),
                 metadata: {
                     instructions,
                     generated_at: new Date().toISOString(),
-                    model: 'gpt-4o-mini-fallback'
+                    model: isRefinement ? 'gpt-4o-mini-refinement-fallback' : 'gpt-4o-mini-fallback',
+                    operation: isRefinement ? 'refine' : 'generate',
+                    had_existing_policy: isRefinement
                 },
                 timestamp: new Date().toISOString()
             };
