@@ -1,5 +1,5 @@
-// Streaming API service using Server-Sent Events
-const API_BASE_URL = 'https://sw9i8ofa62.execute-api.us-east-1.amazonaws.com/dev';
+// Streaming API service using Server-Sent Events - Updated to use new MCP-based agent system
+const API_BASE_URL = 'https://yp9ikbo9h9.execute-api.us-east-1.amazonaws.com/dev';
 
 export interface StreamingEvent {
   type: 'start' | 'policy_char' | 'explanation_char' | 'complete' | 'error';

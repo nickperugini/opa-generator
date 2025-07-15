@@ -121,7 +121,7 @@ const ApiDocumentation: React.FC = () => {
   const examples = [
     {
       title: 'Health Check',
-      request: `curl -X GET "https://sw9i8ofa62.execute-api.us-east-1.amazonaws.com/health"`,
+      request: `curl -X GET "https://yp9ikbo9h9.execute-api.us-east-1.amazonaws.com/dev/health"`,
       response: `{
   "status": "healthy",
   "timestamp": "2025-07-12T01:00:00.000Z",
@@ -131,7 +131,7 @@ const ApiDocumentation: React.FC = () => {
     },
     {
       title: 'Generate Role-Based Access Control Policy',
-      request: `curl -X POST "https://sw9i8ofa62.execute-api.us-east-1.amazonaws.com/generate-policy" \\
+      request: `curl -X POST "https://yp9ikbo9h9.execute-api.us-east-1.amazonaws.com/dev/generate-policy" \\
   -H "Content-Type: application/json" \\
   -d '{
     "instructions": "Only allow if user role is admin and department is HR",
@@ -171,7 +171,7 @@ const ApiDocumentation: React.FC = () => {
     },
     {
       title: 'Refine Existing Policy',
-      request: `curl -X POST "https://sw9i8ofa62.execute-api.us-east-1.amazonaws.com/refine-policy" \\
+      request: `curl -X POST "https://yp9ikbo9h9.execute-api.us-east-1.amazonaws.com/dev/refine-policy" \\
   -H "Content-Type: application/json" \\
   -d '{
     "instructions": "Also require that the user has MFA enabled",
@@ -214,7 +214,7 @@ const ApiDocumentation: React.FC = () => {
     },
     {
       title: 'Time-Based Access Control',
-      request: `curl -X POST "https://sw9i8ofa62.execute-api.us-east-1.amazonaws.com/generate-policy" \\
+      request: `curl -X POST "https://yp9ikbo9h9.execute-api.us-east-1.amazonaws.com/dev/generate-policy" \\
   -H "Content-Type: application/json" \\
   -d '{
     "instructions": "Allow access only during business hours (9 AM to 5 PM) on weekdays",
