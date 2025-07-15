@@ -277,14 +277,23 @@ REQUIREMENTS:
 - NO import statements
 - Use meaningful package names
 - Include default rules for security
+- Test inputs must be valid JSON objects without comments
 
-RESPONSE FORMAT:
-Return a JSON object with:
+RESPONSE FORMAT - Return ONLY a JSON object with this exact structure:
 {
-  "policy": "complete Rego policy code",
-  "test_inputs": [array of test cases],
+  "policy": "complete Rego policy code as a string",
+  "test_inputs": [
+    {"user": {"role": "admin", "department": "HR"}},
+    {"user": {"role": "user", "department": "HR"}},
+    {"user": {"role": "admin", "department": "IT"}}
+  ],
   "explanation": "brief explanation of the policy"
-}`;
+}
+
+IMPORTANT: 
+- The policy field must contain ONLY the Rego code as a string
+- Test inputs must be valid JSON objects without any comments
+- Do not include any markdown formatting or code blocks`;
 
             const completion = await openai.chat.completions.create({
                 model: 'gpt-4o-mini',
@@ -304,7 +313,45 @@ Return a JSON object with:
             // Try to parse as JSON, fallback to text parsing
             let result;
             try {
-                result = JSON.parse(response);
+                const parsed = JSON.parse(response);
+                
+                // Check if policy is double-encoded as JSON string
+                let policy = parsed.policy;
+                let testInputs = parsed.test_inputs || [];
+                
+                if (typeof policy === 'string' && policy.startsWith('{')) {
+                    try {
+                        const innerParsed = JSON.parse(policy);
+                        policy = innerParsed.policy || policy;
+                        testInputs = innerParsed.test_inputs || testInputs;
+                    } catch (e) {
+                        // Keep original if inner parsing fails
+                    }
+                }
+                
+                // Clean up test inputs to remove any JSON comments
+                if (Array.isArray(testInputs)) {
+                    testInputs = testInputs.map(test => {
+                        if (typeof test === 'object' && test !== null) {
+                            return {
+                                description: test.description || "Test case",
+                                input: test.input || test,
+                                expected_result: test.expected_result !== undefined ? test.expected_result : true
+                            };
+                        }
+                        return {
+                            description: "Test case",
+                            input: test,
+                            expected_result: true
+                        };
+                    });
+                }
+                
+                result = {
+                    policy: policy,
+                    test_inputs: testInputs,
+                    explanation: parsed.explanation || `Generated policy for: ${instructions}`
+                };
             } catch (parseError) {
                 // Fallback: extract policy from text response
                 const policyMatch = response.match(/```rego\n([\s\S]*?)\n```/) || 
