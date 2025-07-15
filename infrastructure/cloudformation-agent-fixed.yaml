@@ -162,6 +162,13 @@ Resources:
       RouteKey: 'POST /explain-policy'
       Target: !Sub 'integrations/${LambdaIntegration}'
 
+  # CloudWatch Log Group for API Access Logs
+  APIAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/${Environment}-opa-agent-access-logs'
+      RetentionInDays: 30
+
   # API Gateway Stage
   APIStage:
     Type: AWS::ApiGatewayV2::Stage
@@ -175,25 +182,7 @@ Resources:
         DetailedMetricsEnabled: true
       AccessLogSettings:
         DestinationArn: !GetAtt APIAccessLogGroup.Arn
-        Format: !Sub |
-          {
-            "requestId": "$context.requestId",
-            "requestTime": "$context.requestTime",
-            "httpMethod": "$context.httpMethod",
-            "path": "$context.path",
-            "status": "$context.status",
-            "responseLength": "$context.responseLength",
-            "responseTime": "$context.responseTime",
-            "userAgent": "$context.identity.userAgent",
-            "sourceIp": "$context.identity.sourceIp"
-          }
-
-  # CloudWatch Log Group for API Access Logs
-  APIAccessLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub '/aws/apigateway/${Environment}-opa-agent-access-logs'
-      RetentionInDays: 30
+        Format: '{"requestId":"$context.requestId","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","path":"$context.path","status":"$context.status","responseLength":"$context.responseLength","userAgent":"$context.identity.userAgent","sourceIp":"$context.identity.sourceIp"}'
 
   # Lambda Permission for API Gateway
   LambdaInvokePermission:

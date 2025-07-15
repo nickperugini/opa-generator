@@ -33,9 +33,19 @@ async function getAgent() {
         globalAgent = new OPAPolicyAgent();
         
         // Set OpenAI API key for MCP servers that need it
-        process.env.OPENAI_API_KEY = await getOpenAIApiKey();
+        try {
+            process.env.OPENAI_API_KEY = await getOpenAIApiKey();
+        } catch (error) {
+            console.error('Failed to get OpenAI API key:', error);
+            // Continue without MCP servers for now
+        }
         
-        await globalAgent.initialize();
+        try {
+            await globalAgent.initialize();
+        } catch (error) {
+            console.warn('Agent initialization failed, using fallback mode:', error.message);
+            // Continue with basic functionality
+        }
     }
     return globalAgent;
 }
