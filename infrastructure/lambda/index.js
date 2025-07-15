@@ -1,11 +1,28 @@
 const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
-const { OPAPolicyAgent } = require('./agent-core');
+const { OPAPolicyAgent } = require('./agent-core-simple');
 
 // Initialize AWS Secrets Manager client
 const secretsClient = new SecretsManagerClient({ region: process.env.AWS_REGION || 'us-east-1' });
 
 // Global agent instance (reused across Lambda invocations)
 let globalAgent = null;
+
+/**
+ * Ensure content is clean without escaped characters
+ * This is a safety function to handle any escaped characters that might slip through
+ */
+function ensureCleanContent(content) {
+    if (typeof content !== 'string') {
+        return content;
+    }
+    
+    // Clean up escaped characters that might appear in streaming
+    return content
+        .replace(/\\n/g, '\n')      // Convert escaped newlines to actual newlines
+        .replace(/\\"/g, '"')       // Convert escaped quotes to actual quotes
+        .replace(/\\t/g, '    ')    // Convert escaped tabs to spaces
+        .replace(/\\r/g, '\r');     // Convert escaped carriage returns
+}
 
 /**
  * Get OpenAI API key from AWS Secrets Manager
@@ -72,10 +89,7 @@ function handleCORS() {
 async function handleHealth() {
     try {
         const agent = await getAgent();
-        
-        // Check agent status and tool availability
-        const toolCount = agent.toolRegistry.size;
-        const mcpServerCount = agent.mcpClients.size;
+        const agentStatus = agent.getStatus();
         
         return {
             statusCode: 200,
@@ -87,18 +101,10 @@ async function handleHealth() {
                 status: 'healthy',
                 timestamp: new Date().toISOString(),
                 version: '2.0.0-agent',
-                agent_status: 'initialized',
-                mcp_servers: mcpServerCount,
-                available_tools: toolCount,
-                capabilities: [
-                    'policy_generation',
-                    'policy_refinement', 
-                    'policy_validation',
-                    'policy_explanation',
-                    'deployment_assistance',
-                    'context_management',
-                    'streaming_support'
-                ]
+                agent_status: agentStatus.initialized ? 'initialized' : 'initializing',
+                mcp_servers: agentStatus.mcp_servers,
+                available_tools: agentStatus.available_tools,
+                capabilities: agentStatus.capabilities
             })
         };
     } catch (error) {
@@ -149,10 +155,8 @@ async function handleGeneratePolicy(event) {
             // Handle streaming request with agent
             return await handleStreamingGeneration(agent, instructions, context);
         } else {
-            // Handle regular request with agent
-            const result = await agent.processRequest(instructions, context, {
-                requestType: 'generate'
-            });
+            // Handle regular request with simplified agent
+            const result = await agent.generatePolicy(instructions, context);
 
             return {
                 statusCode: 200,
@@ -185,11 +189,12 @@ async function handleGeneratePolicy(event) {
  */
 async function handleStreamingGeneration(agent, instructions, context) {
     try {
-        // Process request with agent (this handles the full workflow)
-        const result = await agent.processRequest(instructions, context, {
-            requestType: 'generate',
-            streaming: true
-        });
+        // Generate policy using simplified agent
+        const result = await agent.generatePolicy(instructions, context);
+
+        // Ensure the result is properly parsed (the agent should have done this, but double-check)
+        const cleanPolicy = ensureCleanContent(result.policy || '');
+        const cleanExplanation = ensureCleanContent(result.explanation || '');
 
         // Create streaming events from the result
         const events = [];
@@ -206,13 +211,13 @@ async function handleStreamingGeneration(agent, instructions, context) {
         });
 
         // Simulate character-by-character streaming for compatibility
-        // In a real implementation, you might modify the agent to support true streaming
-        if (result.policy) {
-            for (let i = 0; i < result.policy.length; i++) {
+        // Use the cleaned content to avoid escaped characters
+        if (cleanPolicy) {
+            for (let i = 0; i < cleanPolicy.length; i++) {
                 events.push({
                     type: 'policy_char',
                     data: {
-                        char: result.policy[i],
+                        char: cleanPolicy[i],
                         index: i,
                         section: 'policy'
                     }
@@ -220,12 +225,12 @@ async function handleStreamingGeneration(agent, instructions, context) {
             }
         }
 
-        if (result.explanation) {
-            for (let i = 0; i < result.explanation.length; i++) {
+        if (cleanExplanation) {
+            for (let i = 0; i < cleanExplanation.length; i++) {
                 events.push({
                     type: 'explanation_char',
                     data: {
-                        char: result.explanation[i],
+                        char: cleanExplanation[i],
                         index: i,
                         section: 'explanation'
                     }
@@ -233,10 +238,15 @@ async function handleStreamingGeneration(agent, instructions, context) {
             }
         }
 
-        // Add completion event with full result
+        // Add completion event with cleaned result
+        const cleanResult = {
+            ...result,
+            policy: cleanPolicy,
+            explanation: cleanExplanation
+        };
         events.push({
             type: 'complete',
-            data: result
+            data: cleanResult
         });
 
         // Format as Server-Sent Events
@@ -324,10 +334,8 @@ async function handleRefinePolicy(event) {
             // Handle streaming refinement request
             return await handleStreamingRefinement(agent, instructions, refinementContext);
         } else {
-            // Handle regular refinement request
-            const result = await agent.processRequest(instructions, refinementContext, {
-                requestType: 'refine'
-            });
+            // Handle regular refinement request with simplified agent
+            const result = await agent.refinePolicy(instructions, existing_policy, context);
 
             return {
                 statusCode: 200,
@@ -362,11 +370,12 @@ async function handleRefinePolicy(event) {
  */
 async function handleStreamingRefinement(agent, instructions, context) {
     try {
-        // Process refinement request with agent
-        const result = await agent.processRequest(instructions, context, {
-            requestType: 'refine',
-            streaming: true
-        });
+        // Refine policy using simplified agent
+        const result = await agent.refinePolicy(instructions, context.existing_policy || '', context);
+
+        // Ensure the result is properly parsed (the agent should have done this, but double-check)
+        const cleanPolicy = ensureCleanContent(result.policy || '');
+        const cleanExplanation = ensureCleanContent(result.explanation || '');
 
         // Create streaming events from the result
         const events = [];
@@ -384,12 +393,13 @@ async function handleStreamingRefinement(agent, instructions, context) {
         });
 
         // Simulate character-by-character streaming for compatibility
-        if (result.policy) {
-            for (let i = 0; i < result.policy.length; i++) {
+        // Use the cleaned content to avoid escaped characters
+        if (cleanPolicy) {
+            for (let i = 0; i < cleanPolicy.length; i++) {
                 events.push({
                     type: 'policy_char',
                     data: {
-                        char: result.policy[i],
+                        char: cleanPolicy[i],
                         index: i,
                         section: 'policy'
                     }
@@ -397,12 +407,12 @@ async function handleStreamingRefinement(agent, instructions, context) {
             }
         }
 
-        if (result.explanation) {
-            for (let i = 0; i < result.explanation.length; i++) {
+        if (cleanExplanation) {
+            for (let i = 0; i < cleanExplanation.length; i++) {
                 events.push({
                     type: 'explanation_char',
                     data: {
-                        char: result.explanation[i],
+                        char: cleanExplanation[i],
                         index: i,
                         section: 'explanation'
                     }
@@ -410,10 +420,15 @@ async function handleStreamingRefinement(agent, instructions, context) {
             }
         }
 
-        // Add completion event
+        // Add completion event with cleaned result
+        const cleanResult = {
+            ...result,
+            policy: cleanPolicy,
+            explanation: cleanExplanation
+        };
         events.push({
             type: 'complete',
-            data: result
+            data: cleanResult
         });
 
         // Format as Server-Sent Events
@@ -474,9 +489,7 @@ async function handleValidatePolicy(event) {
         }
 
         const agent = await getAgent();
-        const result = await agent.processRequest('Validate this policy', { ...context, policy }, {
-            requestType: 'validate'
-        });
+        const result = await agent.validatePolicy(policy, context);
 
         return {
             statusCode: 200,
@@ -524,9 +537,7 @@ async function handleExplainPolicy(event) {
         }
 
         const agent = await getAgent();
-        const result = await agent.processRequest('Explain this policy', { ...context, policy }, {
-            requestType: 'explain'
-        });
+        const result = await agent.explainPolicy(policy, context);
 
         return {
             statusCode: 200,

@@ -189,7 +189,9 @@ Key guidelines:
 - Provide clear explanations of policy logic
 - Follow OPA best practices for performance and security
 - Use appropriate variable names and structure
-- Include default deny rules where appropriate`,
+- Include default deny rules where appropriate
+
+CRITICAL: You must respond with valid JSON only. Do not include any text before or after the JSON. In the policy field, use actual newlines, not escaped \\n characters.`,
 
             refinement: `
 Your task is to refine existing Rego policies while preserving their original intent and structure.
@@ -199,7 +201,9 @@ Key guidelines:
 - Only modify what's necessary to meet new requirements
 - Preserve existing rules that aren't affected by changes
 - Ensure backward compatibility where possible
-- Explain what changes were made and why`,
+- Explain what changes were made and why
+
+CRITICAL: You must respond with valid JSON only. Do not include any text before or after the JSON. In the policy field, use actual newlines, not escaped \\n characters.`,
 
             validation: `
 Your task is to validate Rego policies for syntax correctness, best practices, and security.
@@ -241,7 +245,7 @@ Key guidelines:
         
         prompt += `Please generate a complete OPA Rego policy that meets these requirements. Return your response in JSON format with the following structure:
 {
-  "policy": "complete Rego policy code",
+  "policy": "complete Rego policy code (raw string, not nested JSON)",
   "explanation": "clear explanation of what the policy does",
   "test_inputs": [
     {
@@ -250,7 +254,9 @@ Key guidelines:
       "expected": true/false
     }
   ]
-}`;
+}
+
+IMPORTANT: The "policy" field must contain raw Rego code as a string, not nested JSON objects.`;
 
         return prompt;
     }
@@ -265,7 +271,20 @@ ${existingPolicy}
 
 New requirements: ${instructions}
 
-Please modify the policy to meet the new requirements while preserving the existing structure and intent. Return your response in JSON format with the same structure as policy generation.`;
+Please modify the policy to meet the new requirements while preserving the existing structure and intent. Return your response in JSON format:
+{
+  "policy": "modified Rego policy code (raw string, not nested JSON)",
+  "explanation": "explanation of changes made and how the policy works",
+  "test_inputs": [
+    {
+      "description": "test case description",
+      "input": { "sample input" },
+      "expected": true/false
+    }
+  ]
+}
+
+IMPORTANT: The "policy" field must contain raw Rego code as a string, not nested JSON objects.`;
     }
 
     /**
@@ -301,11 +320,27 @@ Please modify the policy to meet the new requirements while preserving the exist
         try {
             // Try to parse as JSON first
             const parsed = JSON.parse(response);
+            
+            // Handle nested JSON in policy field (for refinement responses)
+            let policy = parsed.policy || '';
+            let explanation = parsed.explanation || '';
+            let testInputs = parsed.test_inputs || [];
+            
+            // Clean up policy - convert escaped newlines to actual newlines
+            if (typeof policy === 'string') {
+                policy = policy.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, '    ');
+            }
+            
+            // Clean up explanation if it contains escaped characters
+            if (typeof explanation === 'string') {
+                explanation = explanation.replace(/\\"/g, '"').replace(/\\n/g, ' ');
+            }
+            
             return {
                 type: 'complete',
-                policy: parsed.policy || '',
-                explanation: parsed.explanation || '',
-                test_inputs: parsed.test_inputs || [],
+                policy: policy,
+                explanation: explanation || this.extractExplanationFromText(response),
+                test_inputs: testInputs,
                 timestamp: new Date().toISOString(),
                 metadata: {
                     model: 'gpt-4o-mini',
@@ -313,13 +348,46 @@ Please modify the policy to meet the new requirements while preserving the exist
                 }
             };
         } catch (error) {
-            // Fallback: extract policy from response text
+            // Fallback: extract policy and explanation from response text
             console.warn('Failed to parse JSON response, using text extraction');
+            
+            // Try to extract JSON from the response text
+            const jsonMatch = response.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    const extracted = JSON.parse(jsonMatch[0]);
+                    let policy = extracted.policy || '';
+                    let explanation = extracted.explanation || '';
+                    
+                    // Clean up extracted content
+                    if (typeof policy === 'string') {
+                        policy = policy.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, '    ');
+                    }
+                    if (typeof explanation === 'string') {
+                        explanation = explanation.replace(/\\"/g, '"').replace(/\\n/g, ' ');
+                    }
+                    
+                    return {
+                        type: 'complete',
+                        policy: policy || this.extractPolicyFromText(response),
+                        explanation: explanation || this.extractExplanationFromText(response),
+                        test_inputs: extracted.test_inputs || this.extractTestInputsFromText(response),
+                        timestamp: new Date().toISOString(),
+                        metadata: {
+                            model: 'gpt-4o-mini',
+                            agent_version: '2.0.0-simplified'
+                        }
+                    };
+                } catch (innerError) {
+                    console.warn('Failed to parse extracted JSON, using full text extraction');
+                }
+            }
+            
             return {
                 type: 'complete',
                 policy: this.extractPolicyFromText(response),
-                explanation: 'Policy generated successfully',
-                test_inputs: [],
+                explanation: this.extractExplanationFromText(response),
+                test_inputs: this.extractTestInputsFromText(response),
                 timestamp: new Date().toISOString(),
                 metadata: {
                     model: 'gpt-4o-mini',
@@ -345,6 +413,54 @@ Please modify the policy to meet the new requirements while preserving the exist
         }
 
         return text.trim();
+    }
+
+    /**
+     * Extract explanation from text response
+     */
+    extractExplanationFromText(text) {
+        // Look for explanation patterns
+        const explanationPatterns = [
+            /explanation['":\s]*([^"}\n]+)/i,
+            /this policy\s+([^.]+\.)/i,
+            /the policy\s+([^.]+\.)/i,
+            /explanation:\s*([^"}\n]+)/i
+        ];
+
+        for (const pattern of explanationPatterns) {
+            const match = text.match(pattern);
+            if (match && match[1]) {
+                return match[1].trim().replace(/['"]/g, '');
+            }
+        }
+
+        // Fallback: look for descriptive sentences
+        const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 20);
+        for (const sentence of sentences) {
+            if (sentence.toLowerCase().includes('policy') || 
+                sentence.toLowerCase().includes('allow') || 
+                sentence.toLowerCase().includes('rule')) {
+                return sentence.trim();
+            }
+        }
+
+        return 'Policy generated successfully';
+    }
+
+    /**
+     * Extract test inputs from text response
+     */
+    extractTestInputsFromText(text) {
+        try {
+            // Look for test_inputs in JSON format
+            const testMatch = text.match(/"test_inputs":\s*(\[[\s\S]*?\])/);
+            if (testMatch) {
+                return JSON.parse(testMatch[1]);
+            }
+        } catch (error) {
+            console.warn('Failed to extract test inputs from text');
+        }
+        return [];
     }
 
     /**

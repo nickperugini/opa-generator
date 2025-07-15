@@ -28,14 +28,14 @@ export const iteratePolicy = async (instructions: string, existingPolicy: string
   try {
     const request = {
       instructions,
+      existing_policy: existingPolicy,
       context: {
-        existing_policy: existingPolicy,
         user_id: 'demo-user',
         session_id: Date.now().toString(),
         ...context
       }
     };
-    const response = await api.post('/generate-policy', request);
+    const response = await api.post('/refine-policy', request);
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error) && error.response) {

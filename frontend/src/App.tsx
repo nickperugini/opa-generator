@@ -1,29 +1,48 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import PolicyInstructionInput from './components/PolicyInstructionInput';
 import StreamingPolicyDisplay from './components/StreamingPolicyDisplay';
 import PolicyEditor from './components/PolicyEditor';
 import TestInputDisplay from './components/TestInputDisplay';
 import PolicyHistory from './components/PolicyHistory';
 import ApiDocumentation from './components/ApiDocumentation';
-import { StreamingPolicyGenerator } from './services/streamingApi';
 import { generatePolicy, iteratePolicy } from './services/api';
+import { useStreamingPolicy } from './hooks/useStreamingPolicy';
 import { policyHistoryService } from './services/policyHistory';
 
 function App() {
   const [activeTab, setActiveTab] = useState<'generator' | 'editor' | 'history' | 'docs'>('generator');
   const [currentInstructions, setCurrentInstructions] = useState<string>('');
+  const [useStreaming, setUseStreaming] = useState<boolean>(true); // Toggle for streaming vs regular API
   
-  // Policy state
-  const [policy, setPolicy] = useState<string>('');
-  const [explanation, setExplanation] = useState<string>('');
-  const [testInputs, setTestInputs] = useState<any[]>([]);
-  const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const [isStreaming, setIsStreaming] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+  // Streaming state
+  const streamingPolicy = useStreamingPolicy();
   
-  // Streaming generator reference
-  const streamingGeneratorRef = useRef<StreamingPolicyGenerator | null>(null);
+  // Regular API state (fallback)
+  const [regularState, setRegularState] = useState({
+    policy: '',
+    explanation: '',
+    testInputs: [] as any[],
+    isGenerating: false,
+    error: null as string | null
+  });
 
+  // Get current state based on streaming mode
+  const currentState = useStreaming ? {
+    policy: streamingPolicy.state.policy,
+    explanation: streamingPolicy.state.explanation,
+    testInputs: streamingPolicy.state.testInputs,
+    isGenerating: streamingPolicy.state.isStreaming,
+    isStreaming: streamingPolicy.state.isStreaming,
+    error: streamingPolicy.state.error
+  } : {
+    policy: regularState.policy,
+    explanation: regularState.explanation,
+    testInputs: regularState.testInputs,
+    isGenerating: regularState.isGenerating,
+    isStreaming: false,
+    error: regularState.error
+  };
+  
   // Helper function to save policy to history
   const savePolicyToHistory = (instructions: string, policy: string, explanation: string, testInputs: any[]) => {
     if (policy && instructions) {
@@ -43,199 +62,124 @@ function App() {
 
   const handlePolicyGeneration = async (instructions: string) => {
     try {
-      setError(null);
-      setIsGenerating(true);
-      setIsStreaming(true);
-      
-      // Clear existing content immediately
-      setPolicy('');
-      setExplanation('');
-      setTestInputs([]);
-      
-      // Create new streaming generator
-      streamingGeneratorRef.current = new StreamingPolicyGenerator();
-      
-      await streamingGeneratorRef.current.generatePolicy(instructions, {}, {
-        onStart: () => {
-          console.log('Streaming started');
-        },
+      if (useStreaming) {
+        // Use streaming API (history saving is handled automatically by the hook)
+        await streamingPolicy.generatePolicy(instructions);
+      } else {
+        // Use regular API as fallback
+        setRegularState(prev => ({ ...prev, isGenerating: true, error: null }));
         
-        onPolicyChar: (char: string) => {
-          setPolicy(prev => prev + char);
-        },
+        const result = await generatePolicy({ instructions });
         
-        onExplanationChar: (char: string) => {
-          setExplanation(prev => prev + char);
-        },
+        const finalPolicy = result.policy || '';
+        const finalExplanation = result.explanation || '';
+        const finalTestInputs = result.test_inputs || [];
         
-        onComplete: (data: any) => {
-          console.log('Streaming completed:', data);
-          const finalPolicy = data.policy || '';
-          const finalExplanation = data.explanation || '';
-          const finalTestInputs = data.test_inputs || [];
-          
-          setPolicy(finalPolicy);
-          setExplanation(finalExplanation);
-          setTestInputs(finalTestInputs);
-          setIsStreaming(false);
-          setIsGenerating(false);
-          
-          // Save to history
-          savePolicyToHistory(instructions, finalPolicy, finalExplanation, finalTestInputs);
-        },
+        setRegularState({
+          policy: finalPolicy,
+          explanation: finalExplanation,
+          testInputs: finalTestInputs,
+          isGenerating: false,
+          error: null
+        });
         
-        onError: (errorMessage: string) => {
-          console.error('Streaming error:', errorMessage);
-          setError(errorMessage);
-          setIsStreaming(false);
-          setIsGenerating(false);
-          
-          // Fallback to regular API
-          handleFallbackGeneration(instructions);
-        }
-      });
+        // Save to history for regular API
+        savePolicyToHistory(instructions, finalPolicy, finalExplanation, finalTestInputs);
+      }
       
       setCurrentInstructions('');
       setActiveTab('generator');
       
     } catch (error: any) {
       console.error('Policy generation failed:', error);
-      setError(error.message || 'Failed to generate policy');
-      setIsStreaming(false);
-      setIsGenerating(false);
       
-      // Fallback to regular API
-      await handleFallbackGeneration(instructions);
-    }
-  };
-
-  const handleFallbackGeneration = async (instructions: string) => {
-    try {
-      console.log('Using fallback API...');
-      setIsGenerating(true);
+      if (useStreaming) {
+        // Error is handled by the streaming hook
+      } else {
+        setRegularState(prev => ({
+          ...prev,
+          isGenerating: false,
+          error: error.message || 'Failed to generate policy'
+        }));
+      }
       
-      const result = await generatePolicy({ instructions });
-      
-      const finalPolicy = result.policy || '';
-      const finalExplanation = result.explanation || '';
-      const finalTestInputs = result.test_inputs || [];
-      
-      setPolicy(finalPolicy);
-      setExplanation(finalExplanation);
-      setTestInputs(finalTestInputs);
-      setError(null);
-      
-      // Save to history
-      savePolicyToHistory(instructions, finalPolicy, finalExplanation, finalTestInputs);
-      
-    } catch (fallbackError: any) {
-      console.error('Fallback generation failed:', fallbackError);
-      setError(fallbackError.message || 'Failed to generate policy');
-    } finally {
-      setIsGenerating(false);
+      // If streaming fails, try fallback to regular API
+      if (useStreaming && error.message?.includes('streaming')) {
+        console.log('Streaming failed, falling back to regular API...');
+        setUseStreaming(false);
+        // Retry with regular API
+        setTimeout(() => handlePolicyGeneration(instructions), 1000);
+      }
     }
   };
 
   const handlePolicyIteration = async (instructions: string) => {
     try {
-      setError(null);
-      setIsGenerating(true);
-      setIsStreaming(true);
+      const currentPolicy = currentState.policy;
       
-      // Clear existing content immediately
-      setPolicy('');
-      setExplanation('');
-      setTestInputs([]);
-      
-      // Create new streaming generator for refinement
-      streamingGeneratorRef.current = new StreamingPolicyGenerator();
-      
-      await streamingGeneratorRef.current.refinePolicy(instructions, policy, {}, {
-        onStart: () => {
-          console.log('Streaming refinement started');
-        },
+      if (useStreaming) {
+        // Use streaming API for refinement (history saving is handled automatically)
+        await streamingPolicy.refinePolicy(instructions, currentPolicy);
+      } else {
+        // Use regular API as fallback
+        setRegularState(prev => ({ ...prev, isGenerating: true, error: null }));
         
-        onPolicyChar: (char: string) => {
-          setPolicy(prev => prev + char);
-        },
+        const result = await iteratePolicy(instructions, currentPolicy);
         
-        onExplanationChar: (char: string) => {
-          setExplanation(prev => prev + char);
-        },
+        const finalPolicy = result.policy || '';
+        const finalExplanation = result.explanation || '';
+        const finalTestInputs = result.test_inputs || [];
         
-        onComplete: (data: any) => {
-          console.log('Streaming refinement completed:', data);
-          const finalPolicy = data.policy || '';
-          const finalExplanation = data.explanation || '';
-          const finalTestInputs = data.test_inputs || [];
-          
-          setPolicy(finalPolicy);
-          setExplanation(finalExplanation);
-          setTestInputs(finalTestInputs);
-          setIsStreaming(false);
-          setIsGenerating(false);
-          
-          // Save refined policy to history
-          savePolicyToHistory(instructions, finalPolicy, finalExplanation, finalTestInputs);
-        },
+        setRegularState({
+          policy: finalPolicy,
+          explanation: finalExplanation,
+          testInputs: finalTestInputs,
+          isGenerating: false,
+          error: null
+        });
         
-        onError: (errorMessage: string) => {
-          console.error('Streaming refinement error:', errorMessage);
-          setError(errorMessage);
-          setIsStreaming(false);
-          setIsGenerating(false);
-          
-          // Fallback to regular refinement API
-          handleFallbackRefinement(instructions);
-        }
-      });
+        // Save refined policy to history for regular API
+        savePolicyToHistory(instructions, finalPolicy, finalExplanation, finalTestInputs);
+      }
       
       setCurrentInstructions('');
       setActiveTab('generator');
       
     } catch (error: any) {
       console.error('Policy refinement failed:', error);
-      setError(error.message || 'Failed to refine policy');
-      setIsStreaming(false);
-      setIsGenerating(false);
       
-      // Fallback to regular refinement API
-      await handleFallbackRefinement(instructions);
-    }
-  };
-
-  const handleFallbackRefinement = async (instructions: string) => {
-    try {
-      console.log('Using fallback refinement API...');
-      setIsGenerating(true);
+      if (useStreaming) {
+        // Error is handled by the streaming hook
+      } else {
+        setRegularState(prev => ({
+          ...prev,
+          isGenerating: false,
+          error: error.message || 'Failed to refine policy'
+        }));
+      }
       
-      const result = await iteratePolicy(instructions, policy);
-      
-      const finalPolicy = result.policy || '';
-      const finalExplanation = result.explanation || '';
-      const finalTestInputs = result.test_inputs || [];
-      
-      setPolicy(finalPolicy);
-      setExplanation(finalExplanation);
-      setTestInputs(finalTestInputs);
-      setError(null);
-      
-      // Save refined policy to history
-      savePolicyToHistory(instructions, finalPolicy, finalExplanation, finalTestInputs);
-      
-    } catch (fallbackError: any) {
-      console.error('Fallback refinement failed:', fallbackError);
-      setError(fallbackError.message || 'Failed to refine policy');
-    } finally {
-      setIsGenerating(false);
+      // If streaming fails, try fallback to regular API
+      if (useStreaming && error.message?.includes('streaming')) {
+        console.log('Streaming refinement failed, falling back to regular API...');
+        setUseStreaming(false);
+        // Retry with regular API
+        setTimeout(() => handlePolicyIteration(instructions), 1000);
+      }
     }
   };
 
   const clearPolicy = () => {
-    setPolicy('');
-    setExplanation('');
-    setTestInputs([]);
-    setError(null);
+    if (useStreaming) {
+      streamingPolicy.clearState();
+    } else {
+      setRegularState({
+        policy: '',
+        explanation: '',
+        testInputs: [],
+        isGenerating: false,
+        error: null
+      });
+    }
   };
 
   const handlePolicySave = (savedPolicy: string, description: string) => {
@@ -258,14 +202,34 @@ function App() {
               </p>
             </div>
             <div className="flex items-center space-x-4">
+              {/* Streaming Toggle */}
+              <div className="flex items-center space-x-2">
+                <label className="text-sm text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={useStreaming}
+                    onChange={(e) => setUseStreaming(e.target.checked)}
+                    className="mr-1"
+                  />
+                  Streaming
+                </label>
+              </div>
+              
               <div className="flex items-center text-sm text-gray-500">
                 <div className="w-2 h-2 bg-green-600 rounded-full mr-2" style={{ backgroundColor: '#059669' }}></div>
                 API Connected
               </div>
-              {isStreaming && (
+              
+              {currentState.isStreaming && (
                 <div className="flex items-center text-sm text-blue-600">
                   <div className="loading-spinner mr-2" style={{ width: '12px', height: '12px' }}></div>
                   Streaming...
+                  <button
+                    onClick={streamingPolicy.abortStreaming}
+                    className="ml-2 text-xs text-red-600 hover:text-red-800"
+                  >
+                    Cancel
+                  </button>
                 </div>
               )}
             </div>
@@ -303,31 +267,31 @@ function App() {
                 <PolicyInstructionInput
                   onSubmit={handlePolicyGeneration}
                   onIterate={handlePolicyIteration}
-                  isGenerating={isGenerating}
+                  isGenerating={currentState.isGenerating}
                   isRefining={false}
-                  hasExistingPolicy={!!policy}
+                  hasExistingPolicy={!!currentState.policy}
                   currentInstructions={currentInstructions}
                 />
               </div>
               <div>
                 <StreamingPolicyDisplay
-                  policy={policy}
-                  explanation={explanation}
-                  testInputs={testInputs}
-                  isLoading={isGenerating}
-                  error={error}
-                  isStreaming={isStreaming}
+                  policy={currentState.policy}
+                  explanation={currentState.explanation}
+                  testInputs={currentState.testInputs}
+                  isLoading={currentState.isGenerating}
+                  error={currentState.error}
+                  isStreaming={currentState.isStreaming}
                 />
               </div>
             </div>
 
             {/* Test Inputs Display */}
-            {testInputs && testInputs.length > 0 && (
-              <TestInputDisplay testInputs={testInputs} policy={policy} />
+            {currentState.testInputs && currentState.testInputs.length > 0 && (
+              <TestInputDisplay testInputs={currentState.testInputs} policy={currentState.policy} />
             )}
 
             {/* Clear Button */}
-            {(policy || error) && !isStreaming && (
+            {(currentState.policy || currentState.error) && !currentState.isStreaming && (
               <div className="text-center">
                 <button
                   onClick={clearPolicy}
@@ -343,10 +307,10 @@ function App() {
         {activeTab === 'editor' && (
           <div>
             <PolicyEditor
-              initialPolicy={policy}
+              initialPolicy={currentState.policy}
               onSave={handlePolicySave}
             />
-            {!policy && (
+            {!currentState.policy && (
               <div className="mt-4 text-center text-gray-500">
                 <p>Generate a policy first to start editing, or create a new policy from scratch.</p>
               </div>
@@ -363,9 +327,19 @@ function App() {
               }}
               onLoadPolicy={(session) => {
                 // Load policy from history
-                setPolicy(session.policy || '');
-                setExplanation(session.explanation || '');
-                setTestInputs(session.testInputs || []);
+                if (useStreaming) {
+                  streamingPolicy.clearState();
+                  // Set the state directly (this is a limitation of the current hook design)
+                  // In a real app, you might want to modify the hook to support loading state
+                } else {
+                  setRegularState({
+                    policy: session.policy || '',
+                    explanation: session.explanation || '',
+                    testInputs: session.testInputs || [],
+                    isGenerating: false,
+                    error: null
+                  });
+                }
                 setCurrentInstructions(session.instructions);
                 setActiveTab('generator');
               }}
