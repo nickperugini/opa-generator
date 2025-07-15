@@ -278,6 +278,7 @@ REQUIREMENTS:
 - Use meaningful package names
 - Include default rules for security
 - Test inputs must be valid JSON objects without comments
+- Test inputs should match the policy's expected input structure
 
 RESPONSE FORMAT - Return ONLY a JSON object with this exact structure:
 {
@@ -292,8 +293,11 @@ RESPONSE FORMAT - Return ONLY a JSON object with this exact structure:
 
 IMPORTANT: 
 - The policy field must contain ONLY the Rego code as a string
-- Test inputs must be valid JSON objects without any comments
-- Do not include any markdown formatting or code blocks`;
+- Test inputs must be valid JSON objects that match your policy's input structure
+- If policy uses time/date, include time fields in test inputs
+- If policy uses specific attributes, include those attributes in test inputs
+- Do not include any markdown formatting or code blocks
+- Generate test cases that actually test the policy logic (both allow and deny cases)`;
 
             const completion = await openai.chat.completions.create({
                 model: 'gpt-4o-mini',
