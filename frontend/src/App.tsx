@@ -7,6 +7,7 @@ import PolicyHistory from './components/PolicyHistory';
 import ApiDocumentation from './components/ApiDocumentation';
 import { StreamingPolicyGenerator } from './services/streamingApi';
 import { generatePolicy, iteratePolicy } from './services/api';
+import { policyHistoryService } from './services/policyHistory';
 
 function App() {
   const [activeTab, setActiveTab] = useState<'generator' | 'editor' | 'history' | 'docs'>('generator');
@@ -22,6 +23,23 @@ function App() {
   
   // Streaming generator reference
   const streamingGeneratorRef = useRef<StreamingPolicyGenerator | null>(null);
+
+  // Helper function to save policy to history
+  const savePolicyToHistory = (instructions: string, policy: string, explanation: string, testInputs: any[]) => {
+    if (policy && instructions) {
+      try {
+        policyHistoryService.savePolicySession({
+          instructions,
+          policy,
+          explanation: explanation || 'No explanation provided',
+          testInputs: testInputs || []
+        });
+        console.log('Policy saved to history');
+      } catch (error) {
+        console.error('Failed to save policy to history:', error);
+      }
+    }
+  };
 
   const handlePolicyGeneration = async (instructions: string) => {
     try {
@@ -52,11 +70,18 @@ function App() {
         
         onComplete: (data: any) => {
           console.log('Streaming completed:', data);
-          setPolicy(data.policy || '');
-          setExplanation(data.explanation || '');
-          setTestInputs(data.test_inputs || []);
+          const finalPolicy = data.policy || '';
+          const finalExplanation = data.explanation || '';
+          const finalTestInputs = data.test_inputs || [];
+          
+          setPolicy(finalPolicy);
+          setExplanation(finalExplanation);
+          setTestInputs(finalTestInputs);
           setIsStreaming(false);
           setIsGenerating(false);
+          
+          // Save to history
+          savePolicyToHistory(instructions, finalPolicy, finalExplanation, finalTestInputs);
         },
         
         onError: (errorMessage: string) => {
@@ -91,10 +116,17 @@ function App() {
       
       const result = await generatePolicy({ instructions });
       
-      setPolicy(result.policy || '');
-      setExplanation(result.explanation || '');
-      setTestInputs(result.test_inputs || []);
+      const finalPolicy = result.policy || '';
+      const finalExplanation = result.explanation || '';
+      const finalTestInputs = result.test_inputs || [];
+      
+      setPolicy(finalPolicy);
+      setExplanation(finalExplanation);
+      setTestInputs(finalTestInputs);
       setError(null);
+      
+      // Save to history
+      savePolicyToHistory(instructions, finalPolicy, finalExplanation, finalTestInputs);
       
     } catch (fallbackError: any) {
       console.error('Fallback generation failed:', fallbackError);
@@ -133,11 +165,18 @@ function App() {
         
         onComplete: (data: any) => {
           console.log('Streaming refinement completed:', data);
-          setPolicy(data.policy || '');
-          setExplanation(data.explanation || '');
-          setTestInputs(data.test_inputs || []);
+          const finalPolicy = data.policy || '';
+          const finalExplanation = data.explanation || '';
+          const finalTestInputs = data.test_inputs || [];
+          
+          setPolicy(finalPolicy);
+          setExplanation(finalExplanation);
+          setTestInputs(finalTestInputs);
           setIsStreaming(false);
           setIsGenerating(false);
+          
+          // Save refined policy to history
+          savePolicyToHistory(instructions, finalPolicy, finalExplanation, finalTestInputs);
         },
         
         onError: (errorMessage: string) => {
@@ -172,10 +211,17 @@ function App() {
       
       const result = await iteratePolicy(instructions, policy);
       
-      setPolicy(result.policy || '');
-      setExplanation(result.explanation || '');
-      setTestInputs(result.test_inputs || []);
+      const finalPolicy = result.policy || '';
+      const finalExplanation = result.explanation || '';
+      const finalTestInputs = result.test_inputs || [];
+      
+      setPolicy(finalPolicy);
+      setExplanation(finalExplanation);
+      setTestInputs(finalTestInputs);
       setError(null);
+      
+      // Save refined policy to history
+      savePolicyToHistory(instructions, finalPolicy, finalExplanation, finalTestInputs);
       
     } catch (fallbackError: any) {
       console.error('Fallback refinement failed:', fallbackError);
